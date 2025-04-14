@@ -2,17 +2,20 @@
 
 from typing import Optional
 
-from models.user import UserProfile
-from models.skill import Skill
-from models.course import Course
+from ..models import UserProfile
+from ..models import Skill
+from ..models import Course
 from .ai_gen_content import AIGenerator
+import os
+from dotenv import load_dotenv
 
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'ref', '.env'))
 
 class CourseGenerationManager:
     """管理课程生成过程，协调用户配置文件和AI生成"""
 
     def __init__(self, user_profile: UserProfile, skill: Skill, aigenerator: Optional[AIGenerator] = None,
-                 max_iterations: int = 3):
+                 max_iterations: int = 3, api_key: str = None, model: str = "deepseek-chat"):
         """初始化管理器
 
         Args:
@@ -20,10 +23,16 @@ class CourseGenerationManager:
             skill: 技能对象
             aigenerator: AI生成器实例（可选）
             max_iterations: 最大迭代次数
+            api_key: API密钥
+            model: 语言模型名称
         """
         self.user_profile = user_profile
         self.skill = skill
-        self.aigenerator = aigenerator or AIGenerator(max_iterations)
+
+        if api_key is None:
+            api_key = os.getenv('API_KEY')
+
+        self.aigenerator = aigenerator or AIGenerator(max_iterations, api_key=api_key, model=model)
         self.max_iterations = max_iterations
 
     def generate_course(self) -> Course:
@@ -42,11 +51,6 @@ class CourseGenerationManager:
         for i in range(self.max_iterations):
             review = self.aigenerator.review_outline(outline)
             print(f"大纲评审 #{i + 1}: {review}")
-
-            if "不错" in review and "完成" in review:
-                print("大纲已完成，进入下一阶段")
-                break
-
             outline = self.aigenerator.update_outline(outline, review)
             print(f"大纲已更新，现在有{len(outline['chapters'])}个章节")
 
@@ -55,12 +59,14 @@ class CourseGenerationManager:
         for i, chapter in enumerate(outline["chapters"]):
             print(f"生成章节 {i + 1}/{len(outline['chapters'])}: {chapter['title']}")
 
+            # 生成章节内容
             chapter_content = self.aigenerator.generate_chapter_content(
                 chapter["title"],
                 chapter["description"],
                 self.user_profile
             )
 
+            # 章节内容迭代
             for j in range(self.max_iterations - 1):  # 章节迭代次数减一
                 review = self.aigenerator.review_chapter_content(chapter_content)
                 print(f"章节评审 #{j + 1}: {review}")

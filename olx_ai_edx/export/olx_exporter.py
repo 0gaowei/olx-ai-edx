@@ -4,7 +4,7 @@ import os
 import shutil
 import tarfile
 
-from models.course import Course
+from ..models import Course
 
 
 class OLXExporter:

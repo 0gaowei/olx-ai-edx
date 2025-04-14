@@ -55,7 +55,7 @@ class HTMLComponent(Component):
 """
         xml_path = f"html/{self.url_name}.xml"
         xml_content = f"""
-<html url_name="{self.url_name}" />
+<html filename="{self.url_name}" />
 """
         return {html_path: html_content, xml_path: xml_content}
 
