@@ -245,31 +245,60 @@ class Course:
         return course
 
     def to_olx(self) -> Dict[str, str]:
-        """Convert course to OLX format."""
+        """将课程转换为OLX格式。"""
         result = {}
 
-        # Create course.xml
+        # 创建course.xml
         course_xml = f"""
-<course url_name="{self.url_name}" org="{self.org}" course="{self.course}" name="{self.title}"/>
-"""
+    <course url_name="{self.url_name}" org="{self.org}" course="{self.course}" name="{self.title}"/>
+    """
         result["course.xml"] = course_xml
 
-        # Create policy file
-        policy_dir = f"policies/{self.org}/{self.course}"
+        # 创建policy文件 - 修正路径
+        # 注意：policy目录名称必须匹配course.xml中的url_name属性值
+        policy_dir = f"policy/{self.url_name}"  # 修正的路径结构
+
+        # 增加更多policy参数
         policy_content = {
             "course/{}".format(self.url_name): {
-                "display_name": self.title
+                "display_name": self.title,
+                "start": "2023-09-01T00:00:00Z",  # 添加课程开始日期
+                "end": "2023-12-31T23:59:59Z",  # 添加课程结束日期
+                "show_calculator": True,
+                "show_reset_button": True,
+                "tabs": [
+                    {
+                        "course_staff_only": False,
+                        "name": "课程",
+                        "type": "course_info"
+                    },
+                    {
+                        "course_staff_only": False,
+                        "name": "讨论",
+                        "type": "discussion"
+                    },
+                    {
+                        "course_staff_only": False,
+                        "name": "进度",
+                        "type": "progress"
+                    }
+                ],
+                "discussion_topics": {
+                    "总讨论区": {
+                        "id": "course"
+                    }
+                }
             }
         }
         result[f"{policy_dir}/policy.json"] = json.dumps(policy_content, indent=2)
 
-        # Create course folder content
+        # 创建course文件夹内容
         course_path = f"course/{self.url_name}.xml"
         course_content = f"""
-<course display_name="{self.title}" language="en">
-"""
+    <course display_name="{self.title}" language="zh">
+    """
 
-        # Add chapters to course
+        # 添加章节到课程
         for chapter in self.chapters:
             chapter_olx = chapter.to_olx()
             result.update(chapter_olx)
@@ -296,7 +325,7 @@ class AIGenerator:
         """
         # This would be replaced with actual AI API calls in a real system
         return {
-            "course_title": f"{skill.name} 课程 - {user_profile.name}",
+            "course_title": f"{skill.name} course of {user_profile.name}",
             "chapters": [
                 {"title": f"Chapter 1: {skill.name}简介", "description": f"了解{skill.name}的历史和用途"},
                 {"title": "Chapter 2: 基本语法", "description": "学习基础语法和结构"},
@@ -520,6 +549,7 @@ class OLXExporter:
         if os.path.exists(self.course_dir):
             shutil.rmtree(self.course_dir)
         os.makedirs(self.course_dir, exist_ok=True)
+        print(f"课程输出目录: {self.course_dir}")
 
         # Convert course to OLX format
         olx_files = self.course.to_olx()
@@ -578,7 +608,7 @@ def main():
     course = manager.generate_course()
 
     # Step 3: Export to OLX
-    exporter = OLXExporter(course)
+    exporter = OLXExporter(course, f"output/{course.course}_{course.run}")
     tar_path = exporter.export_to_tar_gz()
 
     print(f"\n恭喜！您的课程已生成并导出到：{tar_path}")
