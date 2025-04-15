@@ -3,3 +3,7 @@
 
 output/
 
+
+olx_ai_edx/ai_gen/__pycache__/
+
+olx_ai_edx/models/__pycache__/
