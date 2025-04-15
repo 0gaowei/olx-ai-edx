@@ -14,25 +14,17 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'ref', '.env'))
 class CourseGenerationManager:
     """管理课程生成过程，协调用户配置文件和AI生成"""
 
-    def __init__(self, user_profile: UserProfile, skill: Skill, aigenerator: Optional[AIGenerator] = None,
-                 max_iterations: int = 3, api_key: str = None, model: str = "deepseek-chat"):
+    def __init__(self, user_profile: UserProfile, max_iterations: int = 1, skill: Skill = None, aigenerator: Optional[AIGenerator] = None):
         """初始化管理器
 
         Args:
             user_profile: 用户配置文件
             skill: 技能对象
             aigenerator: AI生成器实例（可选）
-            max_iterations: 最大迭代次数
-            api_key: API密钥
-            model: 语言模型名称
         """
         self.user_profile = user_profile
         self.skill = skill
-
-        if api_key is None:
-            api_key = os.getenv('API_KEY')
-
-        self.aigenerator = aigenerator or AIGenerator(max_iterations, api_key=api_key, model=model)
+        self.aigenerator = aigenerator
         self.max_iterations = max_iterations
 
     def generate_course(self) -> Course:
@@ -66,7 +58,6 @@ class CourseGenerationManager:
                 chapter["description"],
                 self.user_profile
             )
-            print(f"章节内容生成完成，共{len(chapter_content['components'])}个组件\n{chapter_content}")
 
             # 章节内容迭代
             for j in range(self.max_iterations - 1):  # 章节迭代次数减一
@@ -83,6 +74,7 @@ class CourseGenerationManager:
             # 用详细内容更新大纲中的章节
             outline["chapters"][i] = chapter_content
 
+        '''
         # 阶段3：整体审校
         print("\n第3阶段：整体审校")
         for i in range(self.max_iterations - 1):  # 最终评审迭代次数减一
@@ -95,9 +87,11 @@ class CourseGenerationManager:
 
             outline = self.aigenerator.update_full_course(outline, review)
             print("课程已更新")
+        '''
 
         # 从最终大纲创建Course对象
         course = Course.from_dict(outline)
         print(f"课程生成完成：{course.title}，共{len(course.chapters)}章")
+
 
         return course
