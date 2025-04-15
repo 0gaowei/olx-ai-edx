@@ -46,13 +46,14 @@ class CourseGenerationManager:
         # 阶段1：生成课程大纲
         print("第1阶段：生成课程大纲")
         outline = self.aigenerator.generate_initial_outline(self.user_profile, self.skill)
+        print(f"大纲生成完成，共{len(outline['chapters'])}个章节\n{outline}")
 
         # 阶段1.5：大纲迭代
         for i in range(self.max_iterations):
             review = self.aigenerator.review_outline(outline)
             print(f"大纲评审 #{i + 1}: {review}")
             outline = self.aigenerator.update_outline(outline, review)
-            print(f"大纲已更新，现在有{len(outline['chapters'])}个章节")
+            print(f"大纲已更新，现在有{len(outline['chapters'])}个章节\n{outline}")
 
         # 阶段2：生成章节内容
         print("\n第2阶段：逐章生成内容")
@@ -65,6 +66,7 @@ class CourseGenerationManager:
                 chapter["description"],
                 self.user_profile
             )
+            print(f"章节内容生成完成，共{len(chapter_content['components'])}个组件\n{chapter_content}")
 
             # 章节内容迭代
             for j in range(self.max_iterations - 1):  # 章节迭代次数减一
@@ -76,7 +78,7 @@ class CourseGenerationManager:
                     break
 
                 chapter_content = self.aigenerator.update_chapter_content(chapter_content, review)
-                print("章节内容已更新")
+                print(f"章节内容已更新，现在有{len(chapter_content['components'])}个组件\n{chapter_content}")
 
             # 用详细内容更新大纲中的章节
             outline["chapters"][i] = chapter_content
