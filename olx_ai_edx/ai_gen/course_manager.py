@@ -74,6 +74,7 @@ class CourseGenerationManager:
             # 用详细内容更新大纲中的章节
             outline["chapters"][i] = chapter_content
 
+        '''
         # 阶段3：整体审校
         print("\n第3阶段：整体审校")
         for i in range(self.max_iterations - 1):  # 最终评审迭代次数减一
@@ -86,9 +87,11 @@ class CourseGenerationManager:
 
             outline = self.aigenerator.update_full_course(outline, review)
             print("课程已更新")
+        '''
 
         # 从最终大纲创建Course对象
         course = Course.from_dict(outline)
         print(f"课程生成完成：{course.title}，共{len(course.chapters)}章")
+
 
         return course
