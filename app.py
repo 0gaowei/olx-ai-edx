@@ -1,24 +1,21 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import os
-import json
 import uuid
 from dotenv import load_dotenv
 
 from olx_ai_edx.models import UserProfile, Skill
-from olx_ai_edx.ai_gen import AIGenerator, CourseGenerationManager
+from olx_ai_edx.ai_gen import AIGenerator, CourseGenerationManager, UserInteractionManager
 from olx_ai_edx.export import OLXExporter
 
 # 加载环境变量
 load_dotenv(os.path.join(os.path.dirname(__file__), 'olx_ai_edx', 'ref', '.env'))
 
 app = Flask(__name__)
-# CORS(app)  # 允许跨域请求
 CORS(app, resources={r"/api/*": {"origins": "http://127.0.0.1:5500"}})
 
 # 存储用户会话状态
 sessions = {}
-
 
 @app.route('/api/start_session', methods=['POST'])
 def start_session():
@@ -26,14 +23,14 @@ def start_session():
     session_id = str(uuid.uuid4())
     sessions[session_id] = {
         'state': 'welcome',
-        'data': {}
+        'data': {},
+        'interaction_manager': UserInteractionManager(max_iterations=1)
     }
     return jsonify({
         'session_id': session_id,
         'message': '欢迎使用自动课程生成系统！',
         'next_prompt': '请输入您的姓名:'
     })
-
 
 @app.route('/api/interact', methods=['POST'])
 def interact():
@@ -47,10 +44,9 @@ def interact():
 
     session = sessions[session_id]
     state = session['state']
+    interaction_manager = session['interaction_manager']
 
-    # 处理不同状态下的用户输入
     if state == 'welcome':
-        # 处理用户姓名输入
         session['data']['name'] = user_input
         session['state'] = 'skill_input'
         return jsonify({
@@ -59,7 +55,6 @@ def interact():
         })
 
     elif state == 'skill_input':
-        # 处理技能输入
         session['data']['skill_name'] = user_input
         session['state'] = 'model_selection'
         return jsonify({
@@ -69,163 +64,126 @@ def interact():
         })
 
     elif state == 'model_selection':
-        # 处理模型选择
         model_choice = user_input.strip()
         if model_choice == "2":
             model = "glm-4-long"
+            api_key = os.getenv("GLM_API_KEY")
+            base_url = "https://open.bigmodel.cn/api/paas/v4"  # GLM实际API地址
         else:
-            model = "deepseek-chat"  # 默认模型
+            model = "deepseek-chat"
+            api_key = os.getenv("DEEPSEEK_API_KEY")
+            base_url = "https://api.deepseek.com/v1"  # DeepSeek实际API地址
 
         session['data']['model'] = model
-        session['state'] = 'skill_assessment_q1'
+        session['data']['api_key'] = api_key
+        session['data']['base_url'] = base_url  # 存储BASE_URL
 
+        ai_generator = AIGenerator(
+            api_key=api_key,
+            model=model,
+            base_url=base_url  # 传递给AIGenerator构造函数
+        )
+        session['interaction_manager'].aigenerator = ai_generator
+
+        assessment_questions = interaction_manager.aigenerator.generate_assessment_questions(session['data']['skill_name'])
+        # 新增：检查问题列表有效性
+        if not assessment_questions or len(assessment_questions) == 0:
+            return jsonify({
+                'error': '无法生成评估问题，请重试或联系管理员'
+            }), 500
+
+        session['data']['assessment_questions'] = assessment_questions
+        session['data']['current_question_index'] = 0
+        session['data']['user_responses'] = []
+
+        session['state'] = 'skill_assessment'
         return jsonify({
             'message': f'您选择了模型: {model}',
-            'next_prompt': '请回答以下问题来评估您的技能水平 (回答 y/n):\n问题1: 您是否了解编程基础概念? (y/n)',
-            'options': ['y', 'n']
+            'next_prompt': f'请回答以下问题来评估您的技能水平:\n{assessment_questions[0]}'  # 此时列表已确保非空
         })
 
-    elif state == 'skill_assessment_q1':
-        # 问题1回答
-        session['data']['q1'] = user_input.lower() == 'y'
-        session['state'] = 'skill_assessment_q2'
-        return jsonify({
-            'message': '已记录您的回答',
-            'next_prompt': '问题2: 您是否使用过类似的编程语言? (y/n)',
-            'options': ['y', 'n']
+    elif state == 'skill_assessment':
+        current_index = session['data']['current_question_index']
+        session['data']['user_responses'].append({
+            'question': session['data']['assessment_questions'][current_index],
+            'answer': user_input
         })
 
-    elif state == 'skill_assessment_q2':
-        # 问题2回答
-        session['data']['q2'] = user_input.lower() == 'y'
-        session['state'] = 'skill_assessment_q3'
-        return jsonify({
-            'message': '已记录您的回答',
-            'next_prompt': '问题3: 您是否完成过相关项目? (y/n)',
-            'options': ['y', 'n']
-        })
+        if current_index < len(session['data']['assessment_questions']) - 1:
+            next_index = current_index + 1
+            session['data']['current_question_index'] = next_index
+            return jsonify({
+                'message': '已记录您的回答',
+                'next_prompt': session['data']['assessment_questions'][next_index]
+            })
+        else:
+            assessment_result = interaction_manager.aigenerator.analyze_user_responses(
+                session['data']['skill_name'],
+                session['data']['user_responses']
+            )
+            session['data']['assessment_result'] = assessment_result
 
-    elif state == 'skill_assessment_q3':
-        # 问题3回答
-        session['data']['q3'] = user_input.lower() == 'y'
+            # user_profile = interaction_manager.create_user_profile(
+            #     session['data']['name'],
+            #     assessment_result['level'],
+            #     session['data']['skill_name'],
+            #     Skill(session['data']['skill_name'], assessment_result['learning_path'])
+            # )
+            # session['data']['user_profile'] = user_profile
 
-        # 创建用户配置文件和评估技能水平
-        user = UserProfile(session['data']['name'])
-        answers = {
-            'q1': session['data']['q1'],
-            'q2': session['data']['q2'],
-            'q3': session['data']['q3']
-        }
-        skill_level = user.assess_skill_level(answers)
-        session['data']['skill_level'] = skill_level
-        session['data']['user_profile'] = user
-        session['data']['learning_goals'] = []
-        session['state'] = 'learning_goals'
+            session['state'] = 'learning_goals'
+            return jsonify({
+                'message': f'根据评估，您在{session["data"]["skill_name"]}方面的水平为: {assessment_result["level"]}\n'
+                            f'水平说明: {assessment_result["explanation"]}\n'
+                            f'您的学习目标: {", ".join(assessment_result["objectives"])}\n'
+                            f'推荐学习路径: {assessment_result["learning_path"]}',
 
-        return jsonify({
-            'message': f'根据您的回答，系统评估您的技能水平为: {skill_level}',
-            'next_prompt': '请输入您的学习目标 (输入空行结束):'
-        })
+            })
 
     elif state == 'learning_goals':
         if not user_input.strip():
-            # 空行表示结束学习目标输入
             session['state'] = 'generating_course'
-
-            # 准备生成课程
-            user = session['data']['user_profile']
-            skill_name = session['data']['skill_name']
-            skill = Skill(skill_name, f"{skill_name}基础知识")
-
-            # 获取API密钥
-            api_key = os.getenv("GLM_API_KEY")
-            model = session['data']['model']
-
-            # 生成课程
             return jsonify({
-                'message': f'开始为{user.name}生成{skill_name}课程...',
-                'next_prompt': '正在生成课程，请稍候...',
+                'message': '开始生成课程...',
                 'processing': True
             })
         else:
-            # 添加学习目标
+            if 'learning_goals' not in session['data']:
+                session['data']['learning_goals'] = []
             session['data']['learning_goals'].append(user_input)
-            session['data']['user_profile'].add_learning_goal(user_input)
             return jsonify({
-                'message': f'已添加学习目标: {user_input}',
-                'next_prompt': '请输入您的下一个学习目标 (输入空行结束):'
+                'message': f'已添加学习目标: {user_input}',  # 删除 nextprompt
+
             })
 
     elif state == 'generating_course':
-        # 这个状态由前端发起请求触发
-        user = session['data']['user_profile']
-        skill_name = session['data']['skill_name']
-        skill = Skill(skill_name, f"{skill_name}基础知识")
+        user_profile = session['data']['user_profile']
+        skill = Skill(session['data']['skill_name'], session['data']['assessment_result']['learning_path'])
+        ai_generator = session['interaction_manager'].aigenerator
+        course_manager = CourseGenerationManager(
+            max_iterations=1,
+            user_profile=user_profile,
+            skill=skill,
+            aigenerator=ai_generator
+        )
+        course = course_manager.generate_course()
 
-        # 获取API密钥
-        api_key = os.getenv("GLM_API_KEY")
-        model = session['data']['model']
-
-        # 生成课程
-        ai_generator = AIGenerator(max_iterations=1, api_key=api_key, model=model)
-        manager = CourseGenerationManager(max_iterations=1, user_profile=user, skill=skill, aigenerator=ai_generator)
-        course = manager.generate_course()
-
-        # 导出为OLX
         exporter = OLXExporter(course, output_dir=f"output/{course.course}")
         tar_path = exporter.export_to_tar_gz()
 
-        # 存储结果信息
         session['data']['course'] = course
         session['data']['tar_path'] = tar_path
         session['state'] = 'completed'
 
         return jsonify({
-            'message': f'课程已生成完成！',
-            'next_prompt': '您可以下载课程包或查看课程信息:',
+            'message': '课程已生成完成！',
             'course_title': course.title,
             'chapter_count': len(course.chapters),
             'download_url': f'/api/download/{session_id}'
         })
 
-
-@app.route('/api/generate_course/<session_id>', methods=['POST'])
-def generate_course(session_id):
-    """生成课程（异步处理）"""
-    if session_id not in sessions:
-        return jsonify({'error': '会话不存在或已过期'}), 400
-
-    session = sessions[session_id]
-
-    user = session['data']['user_profile']
-    skill_name = session['data']['skill_name']
-    skill = Skill(skill_name, f"{skill_name}基础知识")
-
-    # 获取API密钥
-    api_key = os.getenv("GLM_API_KEY")
-    model = session['data']['model']
-
-    # 生成课程
-    ai_generator = AIGenerator(max_iterations=1, api_key=api_key, model=model)
-    manager = CourseGenerationManager(max_iterations=1, user_profile=user, skill=skill, aigenerator=ai_generator)
-    course = manager.generate_course()
-
-    # 导出为OLX
-    exporter = OLXExporter(course, output_dir=f"output/{course.course}")
-    tar_path = exporter.export_to_tar_gz()
-
-    # 存储结果信息
-    session['data']['course'] = course
-    session['data']['tar_path'] = tar_path
-    session['state'] = 'completed'
-
-    return jsonify({
-        'message': f'课程已生成完成！',
-        'course_title': course.title,
-        'chapter_count': len(course.chapters),
-        'download_url': f'/api/download/{session_id}'
-    })
-
+    else:
+        return jsonify({'error': '未知会话状态'}), 400
 
 @app.route('/api/download/<session_id>', methods=['GET'])
 def download_course(session_id):
@@ -235,7 +193,6 @@ def download_course(session_id):
 
     tar_path = sessions[session_id]['data']['tar_path']
     return send_file(tar_path, as_attachment=True)
-
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
